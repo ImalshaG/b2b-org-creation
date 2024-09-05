@@ -93,7 +93,7 @@ isolated function getRootAccessToken(http:Client apiClient) returns string|error
 
     TokenResponse tokenResponse = check apiClient->post("/oauth2/token", tokenRequest);
     string accessToken = tokenResponse.access_token;
-    io:println("Access Token: " + accessToken);
+    io:println("Access Token received successfully!");
     return accessToken;
 }
 
@@ -125,7 +125,7 @@ isolated function switchAccessToken(http:Client apiClient, string rootAccessToke
 
     TokenResponse orgTokenResponse = check apiClient->post("/oauth2/token", orgTokenRequest);
     string orgAccessToken = orgTokenResponse.access_token;
-    io:println("Organization Access Token: " + orgAccessToken);
+    io:println("Organization Access Token received successfully!");
     return orgAccessToken;
 }
 
