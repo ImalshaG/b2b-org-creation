@@ -1,0 +1,5 @@
+[isConfigs]
+server_url="https://is.wso2isdemo.com"
+admin_role_name="OrgAdmin"
+app_name="guardio-admin-app"
+app_consumer_key="6_4E11AriWxW8p5pnZD0ARclOgwa"

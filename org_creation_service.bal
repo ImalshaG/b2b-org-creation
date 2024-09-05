@@ -1,11 +1,14 @@
 import ballerina/http;
 import ballerina/io;
+import ballerina/os;
 
-string b2bAppName = "Self Service App";
-string adminRoleName = "Org admin";
-
-string IS_SERVER_URL = "https://496f-112-134-171-67.ngrok-free.app";
-const string basicAuthHeader = "Basic Q21FS0Z3cXN0aGxtdkVORTZ0OFl3dHNOMlVrYTpXU2FydWZFTjVIczhhWUFKRnlLMGdJR2Z1YzRESzNtbGxUSjlVV3ZmOE1BYQ==" ;
+type IsConfigs readonly & record {|
+    string server_url;
+    string admin_role_name;
+    string app_name;
+    string app_consumer_key;
+    string app_consumer_secret=os:getEnv("CLIENT_SECRET");
+|};
 
 type TokenResponse readonly & record {
     string access_token;
@@ -41,6 +44,8 @@ type GetRoleIdResponse readonly & record {
     RoleResource[] Resources;
 }; 
 
+configurable IsConfigs isConfigs = ?;
+
 service / on new http:Listener(8080) {
 
     resource function get test(http:Caller caller) returns error? {
@@ -58,17 +63,20 @@ service / on new http:Listener(8080) {
         string userFirstName = check requestBody.userFirstName;
         string userLastName = check requestBody.userLastName;
 
-        // string orgId = "716a36ca-6deb-47af-b49b-5a67c37e36a1";
-        // string userId = "200b8379-17d6-48bb-b952-40b981a84fc9";
+        http:Client oauthClient = check new (isConfigs.server_url);
+        http:Client basicClient = check new (isConfigs.server_url, 
+            auth = {
+                    username: isConfigs.app_consumer_key,
+                    password: isConfigs.app_consumer_secret
+                }
+            );
 
-        http:Client oauthClient = check new (IS_SERVER_URL, {secureSocket: {enable: false}});
-
-        string rootAccessToken = check getRootAccessToken(oauthClient);
+        string rootAccessToken = check getRootAccessToken(basicClient);
         string orgId = check createNewOrganization(organizationName, oauthClient, rootAccessToken);
-        string orgAccessToken = check switchAccessToken(oauthClient, rootAccessToken, orgId);
+        string orgAccessToken = check switchAccessToken(basicClient, rootAccessToken, orgId);
         string userId = check createNewUser(userName, userEmail, userFirstName, userLastName, oauthClient, orgAccessToken);
-        string b2bAppId = check getApplicationId(b2bAppName, oauthClient, orgAccessToken);
-        string roleId = check getRoleId(adminRoleName, b2bAppId, oauthClient, orgAccessToken);
+        string b2bAppId = check getApplicationId(isConfigs.app_name, oauthClient, orgAccessToken);
+        string roleId = check getRoleId(isConfigs.admin_role_name, b2bAppId, oauthClient, orgAccessToken);
         check assignUserToRole(userId, roleId, oauthClient, orgAccessToken);
 
         // Send the response back to the client
@@ -81,7 +89,6 @@ isolated function getRootAccessToken(http:Client apiClient) returns string|error
 
     http:Request tokenRequest = new;
     tokenRequest.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    tokenRequest.addHeader("Authorization", basicAuthHeader);
     tokenRequest.setPayload("grant_type=client_credentials&scope=internal_org_user_mgt_list internal_org_user_mgt_update internal_org_user_mgt_create internal_org_user_mgt_view internal_org_user_mgt_delete internal_org_role_mgt_update internal_org_role_mgt_view internal_org_application_mgt_view internal_org_application_mgt_update internal_organization_delete internal_organization_create internal_organization_view internal_organization_update");
 
     TokenResponse tokenResponse = check apiClient->post("/oauth2/token", tokenRequest);
@@ -109,7 +116,6 @@ isolated function switchAccessToken(http:Client apiClient, string rootAccessToke
 
     http:Request orgTokenRequest = new;
     orgTokenRequest.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    orgTokenRequest.addHeader("Authorization", "Basic Q21FS0Z3cXN0aGxtdkVORTZ0OFl3dHNOMlVrYTpXU2FydWZFTjVIczhhWUFKRnlLMGdJR2Z1YzRESzNtbGxUSjlVV3ZmOE1BYQ==");
     orgTokenRequest.setPayload(
         "grant_type=organization_switch" +
         "&scope=internal_org_role_mgt_view internal_org_role_mgt_update internal_org_user_mgt_create internal_org_user_mgt_list internal_org_application_mgt_view" +
