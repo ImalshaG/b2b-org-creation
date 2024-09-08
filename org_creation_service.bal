@@ -8,6 +8,7 @@ type IsConfigs readonly & record {|
     string app_name;
     string app_consumer_key;
     string app_consumer_secret=os:getEnv("CLIENT_SECRET");
+    string root_console_admin;
 |};
 
 type TokenResponse readonly & record {
@@ -64,7 +65,7 @@ service / on new http:Listener(8080) {
         string userLastName = check requestBody.userLastName;
 
         http:Client oauthClient = check new (isConfigs.server_url);
-        http:Client basicClient = check new (isConfigs.server_url, 
+        http:Client basicClient = check new (isConfigs.server_url,
             auth = {
                     username: isConfigs.app_consumer_key,
                     password: isConfigs.app_consumer_secret
@@ -79,6 +80,12 @@ service / on new http:Listener(8080) {
         string roleId = check getRoleId(isConfigs.admin_role_name, b2bAppId, oauthClient, orgAccessToken);
         check assignUserToRole(userId, roleId, oauthClient, orgAccessToken);
 
+        // Invite console admin user to sub org to allow suborg deletion from parent org.
+        string orgConsoleAppId = check getApplicationId("Console", oauthClient, orgAccessToken);
+        string consoleRoleId = check getRoleId("Administrator", orgConsoleAppId, oauthClient, orgAccessToken);
+        string inviteUserConfirmationCode = check inviteParentUser(isConfigs.root_console_admin, consoleRoleId, oauthClient, orgAccessToken);
+        check acceptInvitation(inviteUserConfirmationCode, oauthClient, orgAccessToken);
+
         // Send the response back to the client
         check caller->respond("B2B Organization " + organizationName + " created successfully" + 
             " with the user " + userName);
@@ -89,7 +96,7 @@ isolated function getRootAccessToken(http:Client apiClient) returns string|error
 
     http:Request tokenRequest = new;
     tokenRequest.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    tokenRequest.setPayload("grant_type=client_credentials&scope=internal_org_user_mgt_list internal_org_user_mgt_update internal_org_user_mgt_create internal_org_user_mgt_view internal_org_user_mgt_delete internal_org_role_mgt_update internal_org_role_mgt_view internal_org_application_mgt_view internal_org_application_mgt_update internal_organization_delete internal_organization_create internal_organization_view internal_organization_update");
+    tokenRequest.setPayload("grant_type=client_credentials&scope=internal_org_guest_mgt_invite_add internal_org_guest_mgt_invite_delete internal_org_guest_mgt_invite_list internal_org_user_mgt_list internal_org_user_mgt_update internal_org_user_mgt_create internal_org_user_mgt_view internal_org_user_mgt_delete internal_org_role_mgt_update internal_org_role_mgt_view internal_org_application_mgt_view internal_org_application_mgt_update internal_organization_delete internal_organization_create internal_organization_view internal_organization_update");
 
     TokenResponse tokenResponse = check apiClient->post("/oauth2/token", tokenRequest);
     string accessToken = tokenResponse.access_token;
@@ -118,7 +125,7 @@ isolated function switchAccessToken(http:Client apiClient, string rootAccessToke
     orgTokenRequest.addHeader("Content-Type", "application/x-www-form-urlencoded");
     orgTokenRequest.setPayload(
         "grant_type=organization_switch" +
-        "&scope=internal_org_role_mgt_view internal_org_role_mgt_update internal_org_user_mgt_create internal_org_user_mgt_list internal_org_application_mgt_view" +
+        "&scope=internal_org_guest_mgt_invite_add internal_org_guest_mgt_invite_delete internal_org_guest_mgt_invite_list internal_org_user_mgt_list internal_org_user_mgt_update internal_org_user_mgt_create internal_org_user_mgt_view internal_org_user_mgt_delete internal_org_role_mgt_update internal_org_role_mgt_view internal_org_application_mgt_view internal_org_application_mgt_update internal_organization_delete internal_organization_create internal_organization_view internal_organization_update" +
         "&token=" + rootAccessToken +
         "&switching_organization=" + orgId
         );
@@ -218,6 +225,59 @@ isolated function assignUserToRole(string userId, string roleId, http:Client api
         io:println("Role assigned successfully");
     } else {
         return error("Error occurred while assigning the role");
+        
+    }
+}
+
+isolated function inviteParentUser(string rootUsername, string orgConsoleRole, http:Client apiClient, string accessToken) returns string|error {
+
+    http:Request inviteUserRequest = new;
+    inviteUserRequest.addHeader("Authorization", "Bearer " + accessToken);
+    inviteUserRequest.addHeader("Content-Type", "application/json");
+    inviteUserRequest.setPayload("{\n" +
+                "    \"usernames\": [\n" +
+                "        \"" + rootUsername + "\"\n" +
+                "        \n" +
+                "    ],\n" +
+                "    \"roles\": [\n" +
+                "        \"" + orgConsoleRole + "\"\n" +
+                "    ],\n" +
+                "    \"properties\": [\n" +
+                "        {\n" +
+                "            \"key\": \"manageNotificationsInternally\",\n" +
+                "            \"value\": \"false\"\n" +
+                "        }\n" +
+                "    ]\n" +
+                "\n" +
+                "}");
+
+    json[] inviteUserResponse = check apiClient->post("/o/api/server/v1/guests/invite", inviteUserRequest);
+    if (inviteUserResponse.length() > 0) {
+        string username = check inviteUserResponse[0].username;
+        io:println("User invited successfully: " + username);
+    } else {
+        io:println("Error occurred while inviting the user: " + rootUsername + " with role: " + orgConsoleRole);
+    }
+    string confirmationCode = check inviteUserResponse[0].confirmationCode;
+    io:println("User invitation confirmation code: " + confirmationCode);
+
+    return confirmationCode;
+}
+
+isolated function acceptInvitation(string confirmationCode, http:Client apiClient, string accessToken) returns error? {
+
+    http:Request acceptInvitationRequest = new;
+    acceptInvitationRequest.addHeader("Authorization", "Bearer " + accessToken);
+    acceptInvitationRequest.addHeader("Content-Type", "application/json");
+    acceptInvitationRequest.setPayload("{\n" +
+                "  \"confirmationCode\": \"" + confirmationCode + "\"\n" +
+                "}");
+
+    http:Response acceptInvitationResponse = check apiClient->post("/t/carbon.super/o/api/server/v1/guests/invitation/accept", acceptInvitationRequest);
+    if (acceptInvitationResponse.statusCode == 204) {
+        io:println("Parent user invitation accepted successfully!");
+    } else {
+        return error("Error occurred while accepting parent user invitation!");
         
     }
 }
